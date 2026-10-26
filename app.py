@@ -62,12 +62,6 @@ st.caption(
     "pada perbandingan Tahap 5 (menang di 5 dari 5 metrik evaluasi). "
     f"Ambang batas klasifikasi (threshold): {THRESHOLD_RISIKO}."
 )
-st.info(
-    "⚠️ Prototipe/demonstrator skripsi -- memakai dataset publik REES46 sebagai "
-    "pengganti data transaksi riil Wings Store (B2B) yang belum dapat diakses "
-    "pada tahap penelitian ini. Bukan integrasi produksi ke CDP sesungguhnya.",
-    icon="⚠️",
-)
 
 try:
     model_wrapper = _muat_model_cached()
