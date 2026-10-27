@@ -76,7 +76,6 @@ st.markdown("""
     border-radius:14px; padding:1.3rem 1.4rem; margin-bottom:1.1rem;
   }
   .panel h3 {margin:0 0 .35rem; font-size:1.02rem; font-weight:650;}
-  .panel .desc {color:var(--muted); font-size:.86rem; line-height:1.6; margin-bottom:.4rem;}
 
   .stButton>button {
     background:var(--accent); color:#fff; border:none; border-radius:10px;
@@ -170,10 +169,10 @@ with st.sidebar:
     st.markdown("### Konfigurasi Model")
     st.markdown(
         f"<div style='font-size:.85rem;line-height:1.9;color:#9aa0ac'>"
-        f"Algoritma &nbsp;<b style='color:#e8eaed'>XGBoost</b><br>"
-        f"Fitur &nbsp;<b style='color:#e8eaed'>{', '.join(FITUR)}</b><br>"
-        f"Ambang batas &nbsp;<b style='color:#e0518a'>{THRESHOLD_RISIKO:.2f}</b><br>"
-        f"Pelanggan tanpa pembelian &nbsp;<b style='color:#e8eaed'>tidak diskor model</b>"
+        f"Algoritma &nbsp;<b>XGBoost</b><br>"
+        f"Fitur &nbsp;<b>{', '.join(FITUR)}</b><br>"
+        f"Ambang batas &nbsp;<b>{THRESHOLD_RISIKO:.2f}</b><br>"
+        f"Pelanggan tanpa pembelian &nbsp;<b>tidak diskor model</b>"
         f"</div>", unsafe_allow_html=True,
     )
 
