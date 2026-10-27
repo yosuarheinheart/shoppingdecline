@@ -153,7 +153,6 @@ with st.sidebar:
         f"<div style='font-size:.85rem;line-height:1.9;color:#9aa0ac'>"
         f"Algoritma &nbsp;<b style='color:#e8eaed'>XGBoost</b><br>"
         f"Fitur &nbsp;<b style='color:#e8eaed'>{', '.join(FITUR)}</b><br>"
-        f"Ambang batas &nbsp;<b style='color:#e0518a'>{THRESHOLD_RISIKO:.2f}</b><br>"
         f"Pelanggan tanpa pembelian &nbsp;<b style='color:#e8eaed'>tidak diskor model</b>"
         f"</div>", unsafe_allow_html=True,
     )
