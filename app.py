@@ -108,8 +108,6 @@ st.markdown("""
     background:transparent; color:var(--accent);
     border:1px solid var(--accent); border-radius:10px; font-weight:600;
   }
-  .stTabs [data-baseweb="tab-list"] {gap:.3rem; border-bottom:1px solid var(--border);}
-  .stTabs [data-baseweb="tab"] {border-radius:9px 9px 0 0; padding:.55rem 1.1rem; font-weight:600;}
   code {color:var(--accent);}
 </style>
 """, unsafe_allow_html=True)
