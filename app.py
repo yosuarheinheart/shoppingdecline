@@ -77,25 +77,7 @@ st.markdown("""
   }
   .panel h3 {margin:0 0 .35rem; font-size:1.02rem; font-weight:650;}
   .panel .desc {color:var(--muted); font-size:.86rem; line-height:1.6; margin-bottom:.4rem;}
-  /* Modifikasi latar belakang & teks khusus untuk panel petunjuk unggah berkas */
-    .panel-putih {
-    background: #ffffff !important;
-    color: #111111 !important;
-    border: 1px solid #dcdcdc !important;
-    border-radius:14px;
-    padding:1.3rem 1.4rem;
-    margin-bottom:1.1rem;
-    }
-    .panel-putih h3 {
-    margin:0 0 .35rem; 
-    font-size:1.02rem; 
-    font-weight:650;
-    color: #111111 !important;
-    }
-    .panel-putih .desc {
-    color: #333333 !important;
-    font-size:.95rem;
-    }
+  
   .stButton>button {
     background:var(--accent); color:#fff; border:none; border-radius:10px;
     padding:.6rem 1.3rem; font-weight:600; width:100%;
