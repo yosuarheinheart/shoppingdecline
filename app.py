@@ -125,7 +125,7 @@ def kpi(kolom, label, nilai, sub="", gaya=""):
 
 def panel_buka(judul, deskripsi=""):
     st.markdown(
-        f'<div class="panel"><h3>{judul}</h3><div class="desc">{deskripsi}</div></div>',
+        f"""<div class="panel-putih"><h3>{judul}</h3><div class="desc">{deskripsi}</div></div>""",
         unsafe_allow_html=True,
     )
 
