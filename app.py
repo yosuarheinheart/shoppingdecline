@@ -193,8 +193,6 @@ with st.sidebar:
         f"</div>", unsafe_allow_html=True,
     )
 
-tab_data, tab_manual = st.tabs(["  Analisis Berkas CSV  ", "  Uji Profil Manual  "])
-
 # ===========================================================================
 with tab_data:
     if berkas is None:
@@ -360,45 +358,3 @@ with tab_data:
                     plot_shap_gelap(shap.plots.beeswarm, sv, tinggi=3.6)
 
 # ===========================================================================
-with tab_manual:
-    panel_buka(
-        "Uji satu profil RFMC secara langsung",
-        "Masukkan nilai RFMC satu pelanggan untuk melihat skor risikonya beserta "
-        "penjelasan kontribusi tiap fitur. Mode ini berguna untuk memahami perilaku "
-        "model, dan mengasumsikan pelanggan tersebut memiliki minimal satu pembelian.",
-    )
-
-    c = st.columns(4)
-    r_in = c[0].number_input(
-        "Recency (R)", min_value=0.0, max_value=1.0, value=0.50, step=0.01, format="%.4f",
-        help="Proporsi sisa periode setelah pembelian terakhir. Mendekati 1 berarti "
-             "pembelian terakhir terjadi sangat lama sebelum periode berakhir.")
-    f_in = c[1].number_input(
-        "Frequency (F)", min_value=0.0, value=0.05, step=0.01, format="%.4f",
-        help="Jumlah transaksi pembelian dibagi panjang periode, yaitu rate per hari.")
-    m_in = c[2].number_input(
-        "Monetary (M)", min_value=0.0, value=0.20, step=0.01, format="%.4f",
-        help="Total nilai pembelian dibagi panjang periode, yaitu rate per hari.")
-    c_in = c[3].number_input(
-        "Clumpiness (C)", min_value=0.0, max_value=1.0, value=0.40, step=0.01, format="%.4f",
-        help="Keteraturan jarak antar-pembelian. Nilai 0 berarti merata, "
-             "nilai mendekati 1 berarti menggumpal di satu titik waktu.")
-
-    if st.button("Hitung Skor Risiko"):
-        h = model.skor_satu_pelanggan(r_in, f_in, m_in, c_in)
-        st.write("")
-        kk = st.columns([1, 1, 2])
-        kpi(kk[0], "Skor risiko", f"{h.skor_risiko:.4f}",
-            f"ambang batas {THRESHOLD_RISIKO:.2f}", gaya="accent")
-        kpi(kk[1], "Keputusan", "Berisiko" if h.berisiko else "Aktif",
-            h.label, gaya="warn" if h.berisiko else "ok")
-
-        st.write("")
-        st.markdown("**Penjelasan kontribusi tiap fitur**")
-        st.caption(
-            "Batang merah mendorong skor naik ke arah berisiko, batang biru "
-            "menurunkannya ke arah tetap aktif."
-        )
-        df_satu = pd.DataFrame([{"R": r_in, "F": f_in, "M": m_in, "C": c_in}])
-        sv = model.shap_lokal(df_satu)
-        plot_shap_gelap(shap.plots.waterfall, sv[0], tinggi=3.4)
