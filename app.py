@@ -163,7 +163,7 @@ def _baca(berkas_bytes: bytes) -> pd.DataFrame:
 st.markdown(f"""
 <div class="hero">
   <span class="pill">Prototipe Penelitian</span>
-  <h1>Prediksi Risiko Pelanggan Toko Kosmetik Daring</h1>
+  <h1>Prediksi Risiko Penurunan Perilaku Belanja E-Commerce Kosmetik</h1>
 </div>
 """, unsafe_allow_html=True)
 
