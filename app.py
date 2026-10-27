@@ -1,16 +1,3 @@
-"""
-Prototipe prediksi risiko pelanggan toko kosmetik daring.
-
-Aplikasi ini menerima berkas CSV berisi log event sesuai struktur dataset
-"eCommerce Events History in Cosmetics Shop", menghitung fitur RFMC dari log
-tersebut dengan prosedur yang identik dengan tahap rekayasa fitur penelitian,
-lalu memprediksi pelanggan mana yang berisiko tidak kembali aktif berbelanja
-pada periode berikutnya.
-
-Cara menjalankan:
-    pip install -r requirements.txt
-    streamlit run app.py
-"""
 import io
 
 import matplotlib
@@ -140,12 +127,8 @@ def _baca(berkas_bytes: bytes) -> pd.DataFrame:
 st.markdown(f"""
 <div class="hero">
   <span class="pill">Prototipe Penelitian</span>
-  <h1>Prediksi Risiko Pelanggan Toko Kosmetik Daring</h1>
-  <p>Unggah log aktivitas pelanggan, dan aplikasi akan menghitung profil
-  <b>RFMC</b> (Recency, Frequency, Monetary, Clumpiness) secara otomatis dari
-  rangkaian event tersebut, lalu memperkirakan pelanggan mana yang berisiko
-  tidak kembali aktif berbelanja pada periode berikutnya.
-  Model: XGBoost pada fitur RFMC, ambang batas keputusan {THRESHOLD_RISIKO:.2f}.</p>
+  <h1>Prediksi Penurunan Perilaku Belanja Pelanggan E-Commerce Kosmetik</h1>
+
 </div>
 """, unsafe_allow_html=True)
 
@@ -182,7 +165,7 @@ if berkas is None:
         "Setiap baris mewakili satu event, dan satu pelanggan dapat memiliki banyak "
         "baris pada beberapa sesi berbeda.",
     )
-    with st.expander("Struktur kolom yang diharapkan", expanded=True):
+    with st.expander("Struktur kolom pada file unggahan", expanded=True):
         st.markdown(
             "Berkas harus memuat sembilan kolom berikut, sama seperti dataset "
             "**eCommerce Events History in Cosmetics Shop**:"
