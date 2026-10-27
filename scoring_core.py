@@ -1,14 +1,25 @@
 """
-Modul scoring inti (Tahap 6 Deployment) -- SENGAJA DIPISAH dari antarmuka
-Streamlit (app.py) supaya logika prediksi + penjelasan SHAP ini bisa dipakai
-ulang oleh pembungkus (wrapper) apapun di masa depan -- Streamlit sekarang,
-REST API (FastAPI/Flask) atau batch job terjadwal nanti kalau benar-benar
-diintegrasikan ke Customer Data Platform (CDP) Wings Store sesuai visi BAB
-III Subbab 3.2.1 -- tanpa perlu menulis ulang logika prediksinya.
+Modul scoring inti untuk prototipe prediksi risiko pelanggan toko kosmetik daring.
 
-Model yang dipakai: Jalur I (XGBoost pada fitur RFMC) -- model dengan
-performa terbaik pada perbandingan 3 arah Tahap 5 (menang di seluruh 5
-metrik: F1, ROC-AUC, MCC, PR-AUC kelas0, PR-AUC kelas1).
+Modul ini sengaja dipisah dari antarmuka Streamlit (app.py) supaya logika
+prediksi dan penjelasan SHAP dapat dipakai ulang oleh pembungkus apa pun di
+masa depan, baik antarmuka web, REST API, maupun proses batch terjadwal, tanpa
+perlu menulis ulang logikanya.
+
+Model: XGBoost pada empat fitur RFMC (Recency, Frequency, Monetary, Clumpiness),
+yaitu model dengan performa terbaik pada perbandingan tiga model di tahap
+evaluasi penelitian.
+
+Definisi target: pelanggan diprediksi "berisiko" apabila pada periode
+berikutnya ia diperkirakan jatuh ke segmen aktivitas terendah atau tidak
+tercatat berbelanja sama sekali.
+
+Gerbang pelanggan tanpa pembelian: model hanya dilatih pada pelanggan yang
+memiliki minimal satu transaksi pembelian. Pelanggan tanpa pembelian sama
+sekali tidak pernah dilewatkan ke model, melainkan langsung dikategorikan
+"Pasif" melalui aturan, persis seperti perlakuan pada tahap segmentasi dalam
+penelitian. Menskor mereka dengan model berarti memakai model di luar cakupan
+data latihnya.
 """
 from __future__ import annotations
 
@@ -22,99 +33,114 @@ import pandas as pd
 import shap
 
 # ---------------------------------------------------------------------------
-# Konfigurasi -- NILAI INI HARUS SAMA PERSIS DENGAN NOTEBOOK TAHAP 4/5 JALUR I
+# Konfigurasi. Nilai di bawah HARUS sama dengan hasil akhir penelitian.
 # ---------------------------------------------------------------------------
-# PENTING: path model dibuat RELATIF terhadap lokasi file ini sendiri (bukan
-# absolute path SageMaker seperti versi sebelumnya), supaya file ini bisa
-# jalan baik di SageMaker MAUPUN di Streamlit Community Cloud -- di kedua
-# tempat itu, repo/folder tempat app.py + scoring_core.py berada HARUS juga
-# menyertakan folder model/ berisi file .joblib ini (lihat panduan deploy).
 DIREKTORI_MODUL = Path(__file__).resolve().parent
 MODEL_PATH = DIREKTORI_MODUL / "model" / "xgboost_jalur1_model_final_tuned.joblib"
 
-FITUR = ["R", "F", "M", "C"]  # URUTAN HARUS SAMA dgn saat training -- jangan diubah urutannya
+FITUR = ["R", "F", "M", "C"]  # urutan harus sama dengan saat pelatihan
 
-# Dari ringkasan_tahap4_jalur1.json -> tahap4_threshold_tuning.threshold_terpilih
-THRESHOLD_RISIKO = 0.45
+# Ambang batas hasil threshold tuning dengan objektif MCC pada validation set.
+THRESHOLD_RISIKO = 0.80
 
-LABEL_BERISIKO = "Berisiko (potensi penurunan kemandirian digital)"
-LABEL_TIDAK_BERISIKO = "Tidak berisiko (self-service stabil)"
+LABEL_BERISIKO = "Berisiko tidak kembali aktif"
+LABEL_TIDAK_BERISIKO = "Diperkirakan tetap aktif"
+LABEL_PASIF = "Pasif (tanpa transaksi pembelian)"
 
 
 @dataclass
 class HasilScoring:
-    """Satu baris hasil scoring -- dipakai baik oleh mode manual (1 baris)
-    maupun mode CSV batch (banyak baris, dikumpulkan jadi DataFrame)."""
-
     skor_risiko: float
     label: str
     berisiko: bool
 
 
-class ModelScoringJalurI:
-    """Pembungkus (wrapper) tipis di atas model Jalur I + explainer SHAP-nya.
-    Dibuat sekali (mahal: load model + bangun explainer), dipakai berulang
-    kali untuk setiap pelanggan/batch -- karena itu di app.py ini akan
-    di-cache (st.cache_resource), bukan dibuat ulang setiap interaksi user."""
+class ModelScoring:
+    """Pembungkus tipis di atas model dan explainer SHAP-nya.
+
+    Pembuatan objek ini mahal (memuat model dan membangun explainer), sehingga
+    pada app.py objek ini di-cache dan dipakai berulang, bukan dibuat ulang
+    setiap interaksi pengguna.
+    """
 
     def __init__(self, model_path: Path = MODEL_PATH):
         if not Path(model_path).exists():
             raise FileNotFoundError(
-                f"Model tidak ditemukan di: {model_path}\n"
-                f"Pastikan notebook Tahap 4 Jalur I sudah dijalankan & model "
-                f"tersimpan di path itu, atau ubah MODEL_PATH di scoring_core.py "
-                f"kalau lokasi model Anda berbeda."
+                f"Berkas model tidak ditemukan di: {model_path}\n\n"
+                f"Pastikan berkas 'xgboost_jalur1_model_final_tuned.joblib' berada "
+                f"di dalam folder 'model/' pada direktori yang sama dengan "
+                f"scoring_core.py, atau sesuaikan MODEL_PATH di berkas ini."
             )
         self.model = joblib.load(model_path)
         self.explainer = shap.Explainer(self.model)
 
-    def skor_batch(self, df_rfmc: pd.DataFrame) -> pd.DataFrame:
-        """Input: DataFrame dengan kolom R, F, M, C (boleh ada kolom lain,
-        akan diabaikan -- kecuali kolom identitas yg ikut dipertahankan).
-        Output: DataFrame yang sama + kolom skor_risiko, label, berisiko."""
-        _validasi_kolom(df_rfmc)
-        X = df_rfmc[FITUR].astype(float)
-        proba = self.model.predict_proba(X)[:, 1]
+    # -- inti ---------------------------------------------------------------
+    def skor_rfmc(self, df_rfmc: pd.DataFrame) -> pd.DataFrame:
+        """Skor tabel RFMC, dengan gerbang aturan untuk pelanggan tanpa pembelian.
 
+        Masukan wajib memuat kolom R, F, M, C. Kolom 'ada_pembelian' bersifat
+        opsional; bila tidak ada, seluruh baris dianggap pelanggan pembeli.
+
+        Keluaran berupa salinan masukan ditambah kolom:
+            skor_risiko : probabilitas keluaran model (NaN untuk kategori Pasif)
+            kategori    : label akhir yang dapat dibaca manusia
+            berisiko    : True / False / NA
+            diskor_model: True bila baris ini benar-benar dilewatkan ke model
+        """
+        _validasi_kolom(df_rfmc)
         hasil = df_rfmc.copy()
-        hasil["skor_risiko"] = proba
-        hasil["berisiko"] = proba >= THRESHOLD_RISIKO
-        hasil["label"] = np.where(hasil["berisiko"], LABEL_BERISIKO, LABEL_TIDAK_BERISIKO)
+
+        if "ada_pembelian" in hasil.columns:
+            mask_model = hasil["ada_pembelian"].astype(int) == 1
+        else:
+            mask_model = pd.Series(True, index=hasil.index)
+
+        hasil["skor_risiko"] = np.nan
+        hasil["berisiko"] = pd.NA
+        hasil["kategori"] = LABEL_PASIF
+        hasil["diskor_model"] = mask_model.values
+
+        if mask_model.any():
+            X = hasil.loc[mask_model, FITUR].astype(float)
+            proba = self.model.predict_proba(X)[:, 1]
+            berisiko = proba >= THRESHOLD_RISIKO
+            hasil.loc[mask_model, "skor_risiko"] = proba
+            hasil.loc[mask_model, "berisiko"] = berisiko
+            hasil.loc[mask_model, "kategori"] = np.where(
+                berisiko, LABEL_BERISIKO, LABEL_TIDAK_BERISIKO
+            )
+
         return hasil
 
     def skor_satu_pelanggan(self, r: float, f: float, m: float, c: float) -> HasilScoring:
-        """Mode manual (Tab 1 Streamlit): 1 pelanggan, 4 angka RFMC."""
-        df_satu = pd.DataFrame([{"R": r, "F": f, "M": m, "C": c}])
-        hasil = self.skor_batch(df_satu).iloc[0]
+        """Mode manual: satu profil RFMC, selalu dilewatkan ke model."""
+        df = pd.DataFrame([{"R": r, "F": f, "M": m, "C": c, "ada_pembelian": 1}])
+        baris = self.skor_rfmc(df).iloc[0]
         return HasilScoring(
-            skor_risiko=float(hasil["skor_risiko"]),
-            label=str(hasil["label"]),
-            berisiko=bool(hasil["berisiko"]),
+            skor_risiko=float(baris["skor_risiko"]),
+            label=str(baris["kategori"]),
+            berisiko=bool(baris["berisiko"]),
         )
 
     def shap_lokal(self, df_rfmc: pd.DataFrame):
-        """Hitung SHAP value utk baris-baris di df_rfmc (bisa 1 baris utk
-        mode manual, atau banyak baris utk mode CSV batch) -- dipakai utk
-        visualisasi waterfall (1 pelanggan) atau beeswarm/bar (agregat
-        beberapa pelanggan) di app.py. Menggunakan TreeSHAP (otomatis
-        dipilih oleh shap.Explainer utk model berbasis pohon seperti
-        XGBoost) -- lihat https://shap.readthedocs.io/ utk referensi API."""
+        """Nilai SHAP untuk baris-baris yang diberikan.
+
+        SHAP menjelaskan skor keluaran model, bukan label hasil pemotongan
+        ambang batas, sehingga nilainya tidak berubah bila ambang batas diubah.
+        """
         _validasi_kolom(df_rfmc)
-        X = df_rfmc[FITUR].astype(float)
-        return self.explainer(X)
+        return self.explainer(df_rfmc[FITUR].astype(float))
 
 
 def _validasi_kolom(df_rfmc: pd.DataFrame) -> None:
-    kolom_hilang = [k for k in FITUR if k not in df_rfmc.columns]
-    if kolom_hilang:
+    hilang = [k for k in FITUR if k not in df_rfmc.columns]
+    if hilang:
         raise ValueError(
-            f"Kolom wajib tidak ditemukan di data: {kolom_hilang}. "
-            f"Data harus punya kolom: {FITUR} (huruf besar, sesuai definisi RFMC "
-            f"di BAB III)."
+            f"Kolom fitur tidak ditemukan: {hilang}. "
+            f"Dibutuhkan kolom {FITUR} (huruf besar)."
         )
 
 
-def muat_model(model_path: Optional[Path] = None) -> ModelScoringJalurI:
-    """Factory function -- titik masuk tunggal utk memuat model, dipanggil
-    oleh app.py (di-cache) maupun oleh skrip/API lain di masa depan."""
-    return ModelScoringJalurI(model_path or MODEL_PATH)
+def muat_model(model_path: Optional[Path] = None) -> ModelScoring:
+    """Titik masuk tunggal untuk memuat model."""
+    return ModelScoring(model_path or MODEL_PATH)

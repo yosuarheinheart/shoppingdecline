@@ -1,173 +1,392 @@
 """
-Prototipe Deployment (Tahap 6 CRISP-DM, BAB III Subbab 3.2.1) -- Aplikasi
-Streamlit yang mendemonstrasikan skor risiko penurunan kemandirian digital
-pelanggan menggunakan model Jalur I (XGBoost pada fitur RFMC), dilengkapi
-penjelasan SHAP lokal per pelanggan.
+Prototipe prediksi risiko pelanggan toko kosmetik daring.
 
-CATATAN PENTING (jujur soal cakupan prototipe ini): BAB III Subbab 3.2.1
-memvisikan integrasi dgn Customer Data Platform (CDP) perusahaan untuk
-mendukung notifikasi personalisasi & penjadwalan kunjungan salesman. Karena
-data transaksi riil Wings Store (B2B) dan akses ke CDP asli belum tersedia
-pada tahap penelitian ini (penelitian memakai dataset publik REES46),
-aplikasi ini adalah PROTOTIPE/DEMONSTRATOR -- bukan integrasi produksi
-sungguhan. Logika scoring intinya (scoring_core.py) SENGAJA dipisah dari
-antarmuka ini supaya bisa dipakai ulang oleh REST API atau batch job kalau
-nanti benar-benar diintegrasikan ke CDP sesungguhnya.
+Aplikasi ini menerima berkas CSV berisi log event sesuai struktur dataset
+"eCommerce Events History in Cosmetics Shop", menghitung fitur RFMC dari log
+tersebut dengan prosedur yang identik dengan tahap rekayasa fitur penelitian,
+lalu memprediksi pelanggan mana yang berisiko tidak kembali aktif berbelanja
+pada periode berikutnya.
 
-Cara jalan: taruh file ini & scoring_core.py di folder yang sama, lalu:
+Cara menjalankan:
     pip install -r requirements.txt
     streamlit run app.py
 """
 import io
 
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 import shap
 import streamlit as st
 
-from scoring_core import FITUR, THRESHOLD_RISIKO, muat_model
-
-st.set_page_config(
-    page_title="Prototipe Deteksi Risiko Penurunan Kemandirian Digital",
-    page_icon="📉",
-    layout="wide",
+from rfmc_builder import (
+    KOLOM_WAJIB, baca_events_csv, hitung_rfmc_dari_events, periode_default, ringkas_events,
+)
+from scoring_core import (
+    FITUR, LABEL_BERISIKO, LABEL_PASIF, LABEL_TIDAK_BERISIKO, THRESHOLD_RISIKO, muat_model,
 )
 
+st.set_page_config(
+    page_title="Prediksi Risiko Pelanggan Kosmetik",
+    page_icon="💄",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
-@st.cache_resource(show_spinner="Memuat model Jalur I (XGBoost)...")
-def _muat_model_cached():
+# ---------------------------------------------------------------------------
+# Gaya tampilan
+# ---------------------------------------------------------------------------
+st.markdown("""
+<style>
+  :root {
+    --bg:#0f1116; --card:#171a21; --border:#262b36; --accent:#e0518a;
+    --ok:#3ecf8e; --warn:#f0a830; --muted:#9aa0ac;
+  }
+  #MainMenu, footer {visibility:hidden;}
+  .block-container {padding-top:2.2rem; padding-bottom:3rem; max-width:1320px;}
+
+  .hero {
+    background:linear-gradient(135deg, rgba(224,81,138,.14), rgba(224,81,138,.02));
+    border:1px solid var(--border); border-radius:16px;
+    padding:1.6rem 1.8rem; margin-bottom:1.6rem;
+  }
+  .hero h1 {margin:0; font-size:1.75rem; font-weight:700; letter-spacing:-.02em;}
+  .hero p {margin:.45rem 0 0; color:var(--muted); font-size:.95rem; line-height:1.55;}
+  .pill {
+    display:inline-block; padding:.2rem .7rem; border-radius:999px;
+    background:rgba(224,81,138,.16); color:var(--accent);
+    font-size:.72rem; font-weight:600; letter-spacing:.04em; text-transform:uppercase;
+  }
+
+  .kpi {
+    background:var(--card); border:1px solid var(--border); border-radius:14px;
+    padding:1.05rem 1.2rem; height:100%;
+  }
+  .kpi .lbl {color:var(--muted); font-size:.74rem; font-weight:600;
+             letter-spacing:.06em; text-transform:uppercase;}
+  .kpi .val {font-size:1.75rem; font-weight:700; margin-top:.3rem; line-height:1.15;}
+  .kpi .sub {color:var(--muted); font-size:.78rem; margin-top:.2rem;}
+  .kpi.accent .val {color:var(--accent);}
+  .kpi.ok .val {color:var(--ok);}
+  .kpi.warn .val {color:var(--warn);}
+
+  .panel {
+    background:var(--card); border:1px solid var(--border);
+    border-radius:14px; padding:1.3rem 1.4rem; margin-bottom:1.1rem;
+  }
+  .panel h3 {margin:0 0 .35rem; font-size:1.02rem; font-weight:650;}
+  .panel .desc {color:var(--muted); font-size:.86rem; line-height:1.6; margin-bottom:.4rem;}
+
+  .stButton>button {
+    background:var(--accent); color:#fff; border:none; border-radius:10px;
+    padding:.6rem 1.3rem; font-weight:600; width:100%;
+  }
+  .stButton>button:hover {background:#c7447a; color:#fff;}
+  .stDownloadButton>button {
+    background:transparent; color:var(--accent);
+    border:1px solid var(--accent); border-radius:10px; font-weight:600;
+  }
+  .stTabs [data-baseweb="tab-list"] {gap:.3rem; border-bottom:1px solid var(--border);}
+  .stTabs [data-baseweb="tab"] {border-radius:9px 9px 0 0; padding:.55rem 1.1rem; font-weight:600;}
+  code {color:var(--accent);}
+</style>
+""", unsafe_allow_html=True)
+
+
+def kpi(kolom, label, nilai, sub="", gaya=""):
+    kolom.markdown(
+        f'<div class="kpi {gaya}"><div class="lbl">{label}</div>'
+        f'<div class="val">{nilai}</div><div class="sub">{sub}</div></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def panel_buka(judul, deskripsi=""):
+    st.markdown(
+        f'<div class="panel"><h3>{judul}</h3><div class="desc">{deskripsi}</div></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def plot_shap_gelap(fungsi_plot, *args, judul="", tinggi=4.2, **kwargs):
+    """Render plot SHAP dengan latar gelap supaya serasi dengan tema aplikasi."""
+    warna_teks = "#e8eaed"
+    with plt.rc_context({
+        "figure.facecolor": "#171a21", "axes.facecolor": "#171a21",
+        "text.color": warna_teks, "axes.labelcolor": warna_teks,
+        "xtick.color": warna_teks, "ytick.color": warna_teks,
+        "axes.edgecolor": "#262b36", "savefig.facecolor": "#171a21",
+    }):
+        fig = plt.figure(figsize=(9, tinggi))
+        fungsi_plot(*args, show=False, **kwargs)
+        if judul:
+            plt.title(judul, color=warna_teks, fontsize=11, pad=12)
+        plt.tight_layout()
+        st.pyplot(fig, clear_figure=True)
+
+
+@st.cache_resource(show_spinner="Memuat model prediksi...")
+def _model():
     return muat_model()
 
 
-def _render_shap_waterfall(explainer_model, df_satu_baris: pd.DataFrame):
-    """Grafik waterfall SHAP utk 1 pelanggan -- menunjukkan fitur mana
-    (R/F/M/C) yang mendorong skor pelanggan ini naik/turun dari baseline."""
-    shap_values = explainer_model.shap_lokal(df_satu_baris)
-    fig = plt.figure(figsize=(8, 4))
-    shap.plots.waterfall(shap_values[0], show=False)
-    st.pyplot(fig, clear_figure=True)
+@st.cache_data(show_spinner="Membaca berkas CSV...")
+def _baca(berkas_bytes: bytes) -> pd.DataFrame:
+    return baca_events_csv(io.BytesIO(berkas_bytes))
 
 
-def _render_shap_beeswarm(explainer_model, df_banyak_baris: pd.DataFrame):
-    """Grafik beeswarm SHAP agregat utk banyak pelanggan sekaligus (mode CSV)."""
-    shap_values = explainer_model.shap_lokal(df_banyak_baris)
-    fig = plt.figure(figsize=(8, 4))
-    shap.plots.beeswarm(shap_values, show=False)
-    st.pyplot(fig, clear_figure=True)
-
-
-st.title("📉 Prototipe Deteksi Dini Risiko Penurunan Kemandirian Digital")
-st.caption(
-    "Model: Jalur I (XGBoost pada fitur RFMC) -- model dengan performa terbaik "
-    "pada perbandingan Tahap 5 (menang di 5 dari 5 metrik evaluasi). "
-    f"Ambang batas klasifikasi (threshold): {THRESHOLD_RISIKO}."
-)
+# ---------------------------------------------------------------------------
+# Header
+# ---------------------------------------------------------------------------
+st.markdown(f"""
+<div class="hero">
+  <span class="pill">Prototipe Penelitian</span>
+  <h1>Prediksi Risiko Pelanggan Toko Kosmetik Daring</h1>
+  <p>Unggah log aktivitas pelanggan, dan aplikasi akan menghitung profil
+  <b>RFMC</b> (Recency, Frequency, Monetary, Clumpiness) secara otomatis dari
+  rangkaian event tersebut, lalu memperkirakan pelanggan mana yang berisiko
+  tidak kembali aktif berbelanja pada periode berikutnya.
+  Model: XGBoost pada fitur RFMC, ambang batas keputusan {THRESHOLD_RISIKO:.2f}.</p>
+</div>
+""", unsafe_allow_html=True)
 
 try:
-    model_wrapper = _muat_model_cached()
+    model = _model()
 except FileNotFoundError as e:
     st.error(str(e))
     st.stop()
 
-tab_manual, tab_batch = st.tabs(["🧍 Input Manual (1 Pelanggan)", "📂 Upload CSV (Banyak Pelanggan)"])
-
-# =============================================================================
-with tab_manual:
-    st.subheader("Input Profil RFMC Satu Pelanggan")
-    st.write(
-        "Masukkan nilai Recency (R), Frequency (F), Monetary (M), dan "
-        "Clumpiness (C) pelanggan -- skala nilai harus konsisten dengan "
-        "proses feature engineering RFMC pada BAB III (biasanya hasil "
-        "normalisasi/standardisasi, BUKAN nilai mentah tanggal/rupiah)."
+# ---------------------------------------------------------------------------
+# Sidebar
+# ---------------------------------------------------------------------------
+with st.sidebar:
+    st.markdown("### Sumber Data")
+    berkas = st.file_uploader(
+        "Berkas CSV log event", type=["csv"],
+        help="Struktur kolom mengikuti dataset eCommerce Events History in Cosmetics Shop.",
+    )
+    st.markdown("---")
+    st.markdown("### Konfigurasi Model")
+    st.markdown(
+        f"<div style='font-size:.85rem;line-height:1.9;color:#9aa0ac'>"
+        f"Algoritma &nbsp;<b style='color:#e8eaed'>XGBoost</b><br>"
+        f"Fitur &nbsp;<b style='color:#e8eaed'>{', '.join(FITUR)}</b><br>"
+        f"Ambang batas &nbsp;<b style='color:#e0518a'>{THRESHOLD_RISIKO:.2f}</b><br>"
+        f"Pelanggan tanpa pembelian &nbsp;<b style='color:#e8eaed'>tidak diskor model</b>"
+        f"</div>", unsafe_allow_html=True,
     )
 
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        r_input = st.number_input("Recency (R)", value=0.0, step=0.01, format="%.4f")
-    with col2:
-        f_input = st.number_input("Frequency (F)", value=0.0, step=0.01, format="%.4f")
-    with col3:
-        m_input = st.number_input("Monetary (M)", value=0.0, step=0.01, format="%.4f")
-    with col4:
-        c_input = st.number_input("Clumpiness (C)", value=0.0, step=0.01, format="%.4f")
+tab_data, tab_manual = st.tabs(["  Analisis Berkas CSV  ", "  Uji Profil Manual  "])
 
-    if st.button("🔍 Hitung Skor Risiko", type="primary"):
-        hasil = model_wrapper.skor_satu_pelanggan(r_input, f_input, m_input, c_input)
-
-        col_skor, col_label = st.columns(2)
-        with col_skor:
-            st.metric("Skor Risiko (Probabilitas)", f"{hasil.skor_risiko:.4f}")
-        with col_label:
-            if hasil.berisiko:
-                st.error(f"Status: {hasil.label}")
-            else:
-                st.success(f"Status: {hasil.label}")
-
-        st.write("**Penjelasan SHAP (kontribusi tiap fitur terhadap skor ini):**")
-        df_satu = pd.DataFrame([{"R": r_input, "F": f_input, "M": m_input, "C": c_input}])
-        _render_shap_waterfall(model_wrapper, df_satu)
-        st.caption(
-            "Grafik di atas menunjukkan fitur mana (R/F/M/C) yang mendorong skor "
-            "pelanggan ini naik (merah) atau turun (biru) dari nilai dasar "
-            "(base value) model -- gunakan untuk memahami ALASAN di balik skor, "
-            "bukan hanya skornya saja, sesuai tujuan interpretasi SHAP pada BAB "
-            "III Subbab 3.2.1 dan BAB II Subbab 2.5.5."
+# ===========================================================================
+with tab_data:
+    if berkas is None:
+        panel_buka(
+            "Mulai dengan mengunggah berkas CSV",
+            "Gunakan panel di sebelah kiri untuk mengunggah log aktivitas pelanggan. "
+            "Setiap baris mewakili satu event, dan satu pelanggan dapat memiliki banyak "
+            "baris pada beberapa sesi berbeda.",
         )
+        with st.expander("Struktur kolom yang diharapkan", expanded=True):
+            st.markdown(
+                "Berkas harus memuat sembilan kolom berikut, sama seperti dataset "
+                "**eCommerce Events History in Cosmetics Shop**:"
+            )
+            st.code(", ".join(KOLOM_WAJIB), language="text")
+            st.markdown(
+                "- `event_type` berisi salah satu dari `view`, `cart`, "
+                "`remove_from_cart`, atau `purchase`\n"
+                "- `event_time` berformat `2019-10-01 00:00:00 UTC`\n"
+                "- `price` dipakai untuk menghitung Monetary, dan hanya baris "
+                "`purchase` yang diperhitungkan\n"
+                "- `category_code` dan `brand` boleh kosong"
+            )
+            st.caption(
+                "Berkas contoh `contoh_dataset_cosmetics_500.csv` dapat dipakai "
+                "untuk mencoba aplikasi ini."
+            )
+    else:
+        try:
+            df_events = _baca(berkas.getvalue())
+        except ValueError as e:
+            st.error(str(e))
+            st.stop()
 
-# =============================================================================
-with tab_batch:
-    st.subheader("Scoring Banyak Pelanggan Sekaligus (CSV)")
-    st.write(
-        f"Upload file CSV dengan kolom wajib: `{', '.join(FITUR)}` "
-        "(boleh ada kolom lain seperti `user_id`, akan dipertahankan di hasil)."
+        info = ringkas_events(df_events)
+
+        st.markdown("#### Ringkasan berkas")
+        k = st.columns(4)
+        kpi(k[0], "Baris event", f"{info['n_baris']:,}")
+        kpi(k[1], "Pelanggan", f"{info['n_pelanggan']:,}", gaya="accent")
+        kpi(k[2], "Sesi", f"{info['n_sesi']:,}")
+        kpi(k[3], "Transaksi pembelian", f"{info['n_purchase']:,}")
+
+        st.write("")
+        kiri, kanan = st.columns([1.15, 1])
+        with kiri:
+            st.markdown("**Sebaran jenis event**")
+            st.bar_chart(
+                pd.Series(info["sebaran_event"], name="jumlah").sort_values(ascending=False),
+                color="#e0518a", height=220,
+            )
+            if info["event_tak_dikenal"]:
+                st.warning(
+                    f"Jenis event di luar empat jenis yang dikenal ditemukan: "
+                    f"{', '.join(info['event_tak_dikenal'])}. Baris tersebut tetap "
+                    f"dihitung sebagai aktivitas, namun tidak dianggap pembelian."
+                )
+
+        with kanan:
+            st.markdown("**Periode analisis**")
+            st.caption(
+                "Fitur R, F, dan M dinormalisasi terhadap panjang periode, sehingga "
+                "periode yang dipilih menentukan skala nilainya. Nilai bawaan diambil "
+                "dari rentang waktu berkas yang diunggah."
+            )
+            awal_default, akhir_default = periode_default(df_events)
+            c1, c2 = st.columns(2)
+            tgl_awal = c1.date_input("Tanggal awal", value=awal_default.date())
+            tgl_akhir = c2.date_input("Tanggal akhir", value=akhir_default.date())
+
+            periode_awal = pd.Timestamp(tgl_awal, tz="UTC")
+            periode_akhir = pd.Timestamp(tgl_akhir, tz="UTC")
+            n_hari = (periode_akhir - periode_awal).total_seconds() / 86400.0
+
+            if n_hari <= 0:
+                st.error("Tanggal akhir harus berada setelah tanggal awal.")
+                st.stop()
+            st.markdown(
+                f"<div style='color:#9aa0ac;font-size:.86rem'>Panjang periode "
+                f"<b style='color:#e0518a'>{n_hari:.0f} hari</b></div>",
+                unsafe_allow_html=True,
+            )
+
+        st.write("")
+        if st.button("Hitung RFMC dan Jalankan Prediksi", type="primary"):
+            with st.spinner("Menghitung fitur RFMC dari log event..."):
+                rfmc = hitung_rfmc_dari_events(df_events, periode_awal, n_hari)
+            with st.spinner("Menjalankan prediksi..."):
+                hasil = model.skor_rfmc(rfmc)
+            st.session_state["hasil"] = hasil
+            st.session_state["n_hari"] = n_hari
+
+        if "hasil" in st.session_state:
+            hasil = st.session_state["hasil"]
+            n_total = len(hasil)
+            n_model = int(hasil["diskor_model"].sum())
+            n_berisiko = int((hasil["kategori"] == LABEL_BERISIKO).sum())
+            n_aman = int((hasil["kategori"] == LABEL_TIDAK_BERISIKO).sum())
+            n_pasif = int((hasil["kategori"] == LABEL_PASIF).sum())
+
+            st.markdown("---")
+            st.markdown("#### Hasil prediksi")
+            k = st.columns(4)
+            kpi(k[0], "Total pelanggan", f"{n_total:,}")
+            kpi(k[1], "Berisiko", f"{n_berisiko:,}",
+                f"{n_berisiko/n_total*100:.1f}% dari total" if n_total else "",
+                gaya="warn")
+            kpi(k[2], "Diperkirakan aktif", f"{n_aman:,}",
+                f"{n_aman/n_total*100:.1f}% dari total" if n_total else "",
+                gaya="ok")
+            kpi(k[3], "Pasif", f"{n_pasif:,}", "tanpa transaksi, tidak diskor model")
+
+            if n_pasif:
+                st.info(
+                    f"{n_pasif:,} pelanggan tidak memiliki satu pun transaksi pembelian "
+                    f"pada periode ini. Mereka dikategorikan Pasif melalui aturan dan "
+                    f"sengaja tidak dilewatkan ke model, sebab model hanya dilatih pada "
+                    f"pelanggan yang pernah melakukan pembelian.",
+                    icon="ℹ️",
+                )
+
+            kolom_tampil = [
+                "user_id", "R", "F", "M", "C", "F_count", "M_sum",
+                "skor_risiko", "kategori",
+            ]
+            tabel = hasil[kolom_tampil].sort_values(
+                "skor_risiko", ascending=False, na_position="last"
+            )
+            st.dataframe(
+                tabel.style.format({
+                    "R": "{:.4f}", "F": "{:.4f}", "M": "{:.4f}", "C": "{:.4f}",
+                    "M_sum": "{:.2f}", "skor_risiko": "{:.4f}",
+                }),
+                use_container_width=True, height=380,
+            )
+
+            buf = io.StringIO()
+            hasil.to_csv(buf, index=False)
+            st.download_button(
+                "Unduh hasil lengkap (CSV)", data=buf.getvalue(),
+                file_name="hasil_prediksi_risiko_pelanggan.csv", mime="text/csv",
+            )
+
+            if n_model:
+                st.write("")
+                kiri2, kanan2 = st.columns([1, 1.25])
+                with kiri2:
+                    st.markdown("**Sebaran skor risiko**")
+                    st.caption(
+                        f"Hanya mencakup {n_model:,} pelanggan yang diskor model. "
+                        f"Garis keputusan berada di {THRESHOLD_RISIKO:.2f}."
+                    )
+                    skor = hasil.loc[hasil["diskor_model"], "skor_risiko"]
+                    bins = pd.cut(skor, bins=20)
+                    sebaran = bins.value_counts().sort_index()
+                    sebaran.index = [f"{i.left:.2f}" for i in sebaran.index]
+                    st.bar_chart(sebaran, color="#e0518a", height=260)
+
+                with kanan2:
+                    st.markdown("**Kontribusi fitur terhadap prediksi**")
+                    st.caption(
+                        "Nilai SHAP menjelaskan skor keluaran model. Warna merah "
+                        "menandakan nilai fitur yang tinggi, biru menandakan rendah."
+                    )
+                    sub = hasil.loc[hasil["diskor_model"]].head(2000)
+                    sv = model.shap_lokal(sub)
+                    plot_shap_gelap(shap.plots.beeswarm, sv, tinggi=3.6)
+
+# ===========================================================================
+with tab_manual:
+    panel_buka(
+        "Uji satu profil RFMC secara langsung",
+        "Masukkan nilai RFMC satu pelanggan untuk melihat skor risikonya beserta "
+        "penjelasan kontribusi tiap fitur. Mode ini berguna untuk memahami perilaku "
+        "model, dan mengasumsikan pelanggan tersebut memiliki minimal satu pembelian.",
     )
 
-    file_csv = st.file_uploader("Pilih file CSV", type=["csv"])
+    c = st.columns(4)
+    r_in = c[0].number_input(
+        "Recency (R)", min_value=0.0, max_value=1.0, value=0.50, step=0.01, format="%.4f",
+        help="Proporsi sisa periode setelah pembelian terakhir. Mendekati 1 berarti "
+             "pembelian terakhir terjadi sangat lama sebelum periode berakhir.")
+    f_in = c[1].number_input(
+        "Frequency (F)", min_value=0.0, value=0.05, step=0.01, format="%.4f",
+        help="Jumlah transaksi pembelian dibagi panjang periode, yaitu rate per hari.")
+    m_in = c[2].number_input(
+        "Monetary (M)", min_value=0.0, value=0.20, step=0.01, format="%.4f",
+        help="Total nilai pembelian dibagi panjang periode, yaitu rate per hari.")
+    c_in = c[3].number_input(
+        "Clumpiness (C)", min_value=0.0, max_value=1.0, value=0.40, step=0.01, format="%.4f",
+        help="Keteraturan jarak antar-pembelian. Nilai 0 berarti merata, "
+             "nilai mendekati 1 berarti menggumpal di satu titik waktu.")
 
-    if file_csv is not None:
-        try:
-            df_upload = pd.read_csv(file_csv)
-        except Exception as e:
-            st.error(f"Gagal membaca CSV: {e}")
-            st.stop()
+    if st.button("Hitung Skor Risiko"):
+        h = model.skor_satu_pelanggan(r_in, f_in, m_in, c_in)
+        st.write("")
+        kk = st.columns([1, 1, 2])
+        kpi(kk[0], "Skor risiko", f"{h.skor_risiko:.4f}",
+            f"ambang batas {THRESHOLD_RISIKO:.2f}", gaya="accent")
+        kpi(kk[1], "Keputusan", "Berisiko" if h.berisiko else "Aktif",
+            h.label, gaya="warn" if h.berisiko else "ok")
 
-        kolom_hilang = [k for k in FITUR if k not in df_upload.columns]
-        if kolom_hilang:
-            st.error(
-                f"Kolom wajib tidak ditemukan di CSV: {kolom_hilang}. "
-                f"Kolom yang ada di file Anda: {list(df_upload.columns)}"
-            )
-            st.stop()
-
-        st.write(f"Jumlah baris terbaca: **{len(df_upload):,}**")
-
-        if st.button("🔍 Jalankan Scoring Batch", type="primary"):
-            with st.spinner("Menghitung skor risiko untuk seluruh baris..."):
-                df_hasil = model_wrapper.skor_batch(df_upload)
-
-            n_berisiko = int(df_hasil["berisiko"].sum())
-            st.metric(
-                "Jumlah pelanggan berisiko",
-                f"{n_berisiko:,} dari {len(df_hasil):,}",
-                f"{n_berisiko / len(df_hasil) * 100:.1f}%",
-            )
-
-            st.dataframe(df_hasil, use_container_width=True)
-
-            buffer_csv = io.StringIO()
-            df_hasil.to_csv(buffer_csv, index=False)
-            st.download_button(
-                "⬇️ Download Hasil Scoring (CSV)",
-                data=buffer_csv.getvalue(),
-                file_name="hasil_scoring_risiko_pelanggan.csv",
-                mime="text/csv",
-            )
-
-            st.write("**Ringkasan SHAP Agregat (seluruh pelanggan di file ini):**")
-            n_sample_shap = min(len(df_upload), 2000)
-            if n_sample_shap < len(df_upload):
-                st.caption(
-                    f"(Ditampilkan dari {n_sample_shap:,} baris pertama saja demi "
-                    f"kecepatan render, dari total {len(df_upload):,} baris.)"
-                )
-            _render_shap_beeswarm(model_wrapper, df_upload.head(n_sample_shap))
+        st.write("")
+        st.markdown("**Penjelasan kontribusi tiap fitur**")
+        st.caption(
+            "Batang merah mendorong skor naik ke arah berisiko, batang biru "
+            "menurunkannya ke arah tetap aktif."
+        )
+        df_satu = pd.DataFrame([{"R": r_in, "F": f_in, "M": m_in, "C": c_in}])
+        sv = model.shap_lokal(df_satu)
+        plot_shap_gelap(shap.plots.waterfall, sv[0], tinggi=3.4)
