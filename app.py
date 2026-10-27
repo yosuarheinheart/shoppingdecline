@@ -142,11 +142,6 @@ st.markdown(f"""
 <div class="hero">
   <span class="pill">Prototipe Penelitian</span>
   <h1>Prediksi Risiko Pelanggan Toko Kosmetik Daring</h1>
-  <p>Unggah log aktivitas pelanggan, dan aplikasi akan menghitung profil
-  <b>RFMC</b> (Recency, Frequency, Monetary, Clumpiness) secara otomatis dari
-  rangkaian event tersebut, lalu memperkirakan pelanggan mana yang berisiko
-  tidak kembali aktif berbelanja pada periode berikutnya.
-  Model: XGBoost pada fitur RFMC, ambang batas keputusan {THRESHOLD_RISIKO:.2f}.</p>
 </div>
 """, unsafe_allow_html=True)
 
