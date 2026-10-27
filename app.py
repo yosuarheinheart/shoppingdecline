@@ -201,10 +201,6 @@ with tab_data:
                 "`purchase` yang diperhitungkan\n"
                 "- `category_code` dan `brand` boleh kosong"
             )
-            st.caption(
-                "Berkas contoh `contoh_dataset_cosmetics_500.csv` dapat dipakai "
-                "untuk mencoba aplikasi ini."
-            )
     else:
         try:
             df_events = _baca(berkas.getvalue())
