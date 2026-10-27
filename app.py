@@ -194,7 +194,6 @@ with st.sidebar:
     )
 
 # ===========================================================================
-with tab_data:
     if berkas is None:
         panel_buka(
             "Mulai dengan mengunggah berkas CSV",

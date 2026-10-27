@@ -112,15 +112,6 @@ class ModelScoring:
 
         return hasil
 
-    def skor_satu_pelanggan(self, r: float, f: float, m: float, c: float) -> HasilScoring:
-        """Mode manual: satu profil RFMC, selalu dilewatkan ke model."""
-        df = pd.DataFrame([{"R": r, "F": f, "M": m, "C": c, "ada_pembelian": 1}])
-        baris = self.skor_rfmc(df).iloc[0]
-        return HasilScoring(
-            skor_risiko=float(baris["skor_risiko"]),
-            label=str(baris["kategori"]),
-            berisiko=bool(baris["berisiko"]),
-        )
 
     def shap_lokal(self, df_rfmc: pd.DataFrame):
         """Nilai SHAP untuk baris-baris yang diberikan.
